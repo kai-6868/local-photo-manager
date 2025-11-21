@@ -1,0 +1,27 @@
+{
+  "name": "local-photo-profile-manager",
+  "description": "A modern, responsive web application for managing photo profiles with local file system integration",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "keywords": ["photo", "gallery", "profile", "local", "file-system", "react", "typescript"],
+  "author": "Local Photo Manager",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite --port 3000",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
