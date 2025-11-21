@@ -7,6 +7,8 @@ import AddProfilePage from './components/AddProfilePage';
 import GalleryView from './components/GalleryView';
 import { UserIcon } from './components/icons';
 import FolderService from './services/FolderService';
+import FileSystemService from './services/FileSystemService';
+import { calculateDefaultCropData, getImageDimensions } from './utils/cropUtils';
 
 const generateMockData = async (): Promise<Profile[]> => {
   const profilesData: Omit<Profile, 'id' | 'avatarId' | 'images'>[] = [
@@ -24,12 +26,12 @@ const generateMockData = async (): Promise<Profile[]> => {
     const images: LocalImage[] = [];
     
     for (let i = 0; i < Math.floor(Math.random() * 10) + 5; i++) {
-        const imageId = `img_${Date.now()}_${Math.random()}`;
+        const imageName = `${p.name.split(' ')[0]}_image_${i}.jpg`;
         const imageUrl = `https://picsum.photos/seed/${profileId}_${i}/800/600`;
         images.push({
-            id: imageId,
+            id: imageName,
             url: imageUrl,
-            name: `${p.name.split(' ')[0]}_image_${i}.jpg`
+            name: imageName
         });
     }
 
@@ -74,6 +76,7 @@ const App: React.FC = () => {
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [folderService] = useState(() => FolderService.getInstance());
+  const [fileSystemService] = useState(() => FileSystemService.getInstance());
   const [isFolderConnected, setIsFolderConnected] = useState(false);
   const [connectedFolderName, setConnectedFolderName] = useState<string>('');
 
@@ -155,7 +158,9 @@ const App: React.FC = () => {
           avatarId: '',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          imageCount: 0
+          imageCount: 0,
+          imageOrder: [],
+          avatarCropData: null
         };
         
         const metadataHandle = await profileHandle.getFileHandle('profile.json', { create: true });
@@ -223,22 +228,22 @@ const App: React.FC = () => {
         // Create images subdirectory
         const imagesHandle = await profileHandle.getDirectoryHandle('images', { create: true });
         
-        // Save all images (avatar + others)
+        // Save all images (avatar + others) with timestamp filenames
         const allFiles = [avatar, ...otherImages];
         const savedImages: LocalImage[] = [];
         
         for (const file of allFiles) {
-          const imageHandle = await imagesHandle.getFileHandle(file.name, { create: true });
-          const writable = await imageHandle.createWritable();
-          await writable.write(file);
-          await writable.close();
+          // Use FileSystemService to save with timestamp filename
+          const timestampFileName = await fileSystemService.saveImageToProfile(profileHandle, file, 'images');
           
-          savedImages.push({
-            id: `img_${sanitizedName}_${file.name}`,
-            url: URL.createObjectURL(file),
-            name: file.name,
-            profileName: sanitizedName
-          });
+          if (timestampFileName) {
+            savedImages.push({
+              id: `${timestampFileName}`,
+              url: URL.createObjectURL(file),
+              name: timestampFileName,
+              profileName: sanitizedName
+            });
+          }
         }
         
         // Create profile.json metadata
@@ -249,7 +254,9 @@ const App: React.FC = () => {
           avatarId: savedImages.length > 0 ? savedImages[0].id : '',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
-          imageCount: savedImages.length
+          imageCount: savedImages.length,
+          imageOrder: savedImages.map(img => img.name),
+          avatarCropData: null
         };
         
         const metadataHandle = await profileHandle.getFileHandle('profile.json', { create: true });
@@ -272,13 +279,28 @@ const App: React.FC = () => {
         
         alert(`✅ Profile "${name}" saved successfully with ${savedImages.length} images!`);
       } else {
-        // Fallback to in-memory operations
+        // Fallback to in-memory operations with timestamp filenames
         const allFiles = [avatar, ...otherImages];
-        const newImages: LocalImage[] = allFiles.map(file => ({
-          id: `img_${Date.now()}_${Math.random()}`,
-          url: URL.createObjectURL(file),
-          name: file.name
-        }));
+        const newImages: LocalImage[] = allFiles.map(file => {
+          // Generate timestamp filename for memory mode too
+          const now = new Date();
+          const timestamp = now.toISOString()
+            .replace(/T/, '_')
+            .replace(/:/g, '')
+            .replace(/-/g, '')
+            .split('.')[0]; // Format: YYYYMMDD_HHMMSS
+          
+          // Get file extension from original filename
+          const lastDotIndex = file.name.lastIndexOf('.');
+          const extension = lastDotIndex !== -1 ? file.name.substring(lastDotIndex) : '.jpg';
+          const timestampFileName = `${timestamp}${extension}`;
+
+          return {
+            id: timestampFileName,
+            url: URL.createObjectURL(file),
+            name: timestampFileName
+          };
+        });
 
         const newProfile: Profile = {
           id: `profile_${Date.now()}_${Math.random()}`,
@@ -477,9 +499,31 @@ const App: React.FC = () => {
       console.log('🗑️ Starting file system deletion...');
       
       folderService.deleteImageFile(image.profileName || profile.name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_'), image.name)
-        .then(success => {
+        .then(async success => {
           if (success) {
-            updateProfiles();
+            // Reload the entire profile from file system to ensure data consistency
+            const profileFolderName = image.profileName || profile.name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_');
+            const reloadedProfile = await folderService.loadProfile(profileFolderName);
+            if (reloadedProfile) {
+              setProfiles(prev => {
+                const updated = prev.map(p => {
+                  if (p.id === profileId) {
+                    return { ...p, images: reloadedProfile.images };
+                  }
+                  return p;
+                });
+                console.log('✅ Profile reloaded after image deletion');
+                return updated;
+              });
+              setAllImages(prev => {
+                // Remove old images from this profile and add reloaded ones
+                const otherImages = prev.filter(img => img.profileName !== profileFolderName);
+                return [...otherImages, ...reloadedProfile.images];
+              });
+            } else {
+              // Fallback to memory update if reload fails
+              updateProfiles();
+            }
             alert(`✅ Image "${image.name}" deleted successfully!`);
           } else {
             alert(`❌ Failed to delete image "${image.name}"`);
@@ -496,7 +540,13 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSetAvatar = (profileId: string, imageId: string) => {
+  const handleSetAvatar = async (profileId: string, imageId: string) => {
+    // Prevent concurrent avatar setting operations
+    if (isLoading) {
+      console.log('⏳ Avatar setting already in progress, ignoring request');
+      return;
+    }
+    
     const profile = profiles.find(p => p.id === profileId);
     const image = profile?.images.find(img => img.id === imageId);
     
@@ -506,39 +556,99 @@ const App: React.FC = () => {
     }
     
     console.log(`👤 Setting avatar for profile "${profile.name}" to image "${image.name}"`);
+    setIsLoading(true);
     
-    const updateAvatarInMemory = () => {
+    try {
+      // Lấy kích thước ảnh để tính toán default crop data cho ảnh MỚI
+      console.log(`🔄 Calculating new crop data for image: ${image.name}`);
+      const dimensions = await getImageDimensions(image.url);
+      
+      // Tính toán crop data MỚI dựa trên kích thước ảnh hiện tại (không dùng lại cũ)
+      const newCropData = calculateDefaultCropData(dimensions.width, dimensions.height);
+      
+      console.log(`📏 Image "${image.name}" dimensions: ${dimensions.width}x${dimensions.height}`);
+      console.log(`🎯 NEW crop data (not reused): centerX=${newCropData.centerX}, centerY=${newCropData.centerY}`);
+      
+      const updateAvatarInMemory = () => {
+        setProfiles(prev => {
+          const updated = prev.map(p => {
+            if (p.id === profileId) {
+              // Set ảnh mới làm avatar với crop data MỚI tính toán riêng
+              return { 
+                ...p, 
+                avatarId: imageId, 
+                avatarCropData: newCropData  // Luôn luôn tạo mới, không dùng lại cũ
+              };
+            }
+            return p;
+          });
+          console.log('✅ Avatar updated in memory with FRESH crop data');
+          return updated;
+        });
+      };
+      
+      if (isFolderConnected && folderService.isConnected) {
+        // Update avatar in file system
+        console.log('💾 Updating avatar in file system...');
+        const profileFolderName = profile.images[0]?.profileName || profile.name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_');
+        
+        const success = await folderService.updateProfileMetadata(profileFolderName, {
+          avatarId: imageId,
+          avatarCropData: newCropData  // Sử dụng crop data MỚI
+        });
+        
+        if (success) {
+          console.log(`💾 Metadata updated successfully for avatar: ${imageId}`);
+          try {
+            // Reload profile from file system to ensure consistency
+            const reloadedProfile = await folderService.loadProfile(profileFolderName);
+            if (reloadedProfile) {
+              console.log(`🔄 Profile reloaded:`, reloadedProfile);
+              setProfiles(prev => {
+                const updated = prev.map(p => {
+                  if (p.id === profileId) {
+                    return { ...p, ...reloadedProfile, id: profileId }; // Preserve original ID
+                  }
+                  return p;
+                });
+                console.log('✅ Profile reloaded after avatar setting');
+                return updated;
+              });
+            } else {
+              console.warn('⚠️ Failed to reload profile, using fallback update');
+              // Fallback to memory update
+              updateAvatarInMemory();
+            }
+            console.log(`✅ Avatar set to "${image.name}" for profile "${profile.name}"`);
+          } catch (reloadError) {
+            console.error('❌ Error during profile reload:', reloadError);
+            // Fallback to memory update
+            updateAvatarInMemory();
+          }
+        } else {
+          console.error(`❌ Failed to update avatar metadata`);
+          // Fallback to memory update
+          updateAvatarInMemory();
+        }
+      } else {
+        // Update in memory only
+        updateAvatarInMemory();
+        console.log(`✅ Avatar set to "${image.name}" in memory mode`);
+      }
+    } catch (error) {
+      console.error('Set avatar error:', error);
+      // Fallback without crop data if image loading fails
       setProfiles(prev => {
-        const updated = prev.map(p => p.id === profileId ? { ...p, avatarId: imageId } : p);
-        console.log('✅ Avatar updated in memory');
+        const updated = prev.map(p => {
+          if (p.id === profileId) {
+            return { ...p, avatarId: imageId };
+          }
+          return p;
+        });
         return updated;
       });
-    };
-    
-    if (isFolderConnected && folderService.isConnected) {
-      // Update avatar in file system
-      console.log('💾 Updating avatar in file system...');
-      const profileFolderName = profile.images[0]?.profileName || profile.name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_');
-      
-      folderService.updateProfileMetadata(profileFolderName, {
-        avatarId: imageId
-      })
-        .then(success => {
-          if (success) {
-            updateAvatarInMemory();
-            console.log(`✅ Avatar set to "${image.name}" for profile "${profile.name}"`);
-          } else {
-            alert(`❌ Failed to update avatar`);
-          }
-        })
-        .catch(error => {
-          console.error('Set avatar error:', error);
-          alert(`❌ Error setting avatar: ${error.message}`);
-        });
-    } else {
-      // Update in memory only
-      updateAvatarInMemory();
-      console.log(`✅ Avatar set to "${image.name}" in memory mode`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -552,12 +662,27 @@ const App: React.FC = () => {
     console.log(`📸 Starting upload of ${files.length} images to profile: ${profile.name}`);
     
     const addImagesToMemory = (filesToAdd: File[] = files) => {
-      const newImages: LocalImage[] = filesToAdd.map(file => ({
-        id: `img_${Date.now()}_${Math.random()}`,
-        url: URL.createObjectURL(file),
-        name: file.name,
-        profileName: profile.images[0]?.profileName
-      }));
+      const newImages: LocalImage[] = filesToAdd.map(file => {
+        // Generate timestamp filename for memory mode too
+        const now = new Date();
+        const timestamp = now.toISOString()
+          .replace(/T/, '_')
+          .replace(/:/g, '')
+          .replace(/-/g, '')
+          .split('.')[0]; // Format: YYYYMMDD_HHMMSS
+        
+        // Get file extension from original filename
+        const lastDotIndex = file.name.lastIndexOf('.');
+        const extension = lastDotIndex !== -1 ? file.name.substring(lastDotIndex) : '.jpg';
+        const timestampFileName = `${timestamp}${extension}`;
+
+        return {
+          id: timestampFileName,
+          url: URL.createObjectURL(file),
+          name: timestampFileName,
+          profileName: profile.images[0]?.profileName
+        };
+      });
       
       setProfiles(prev => {
         const updated = prev.map(p => {
@@ -580,19 +705,27 @@ const App: React.FC = () => {
       const profileFolderName = profile.images[0]?.profileName || profile.name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_');
       
       folderService.addImagesToProfile(profileFolderName, files)
-        .then(newImages => {
+        .then(async newImages => {
           if (newImages.length > 0) {
-            setProfiles(prev => {
-              const updated = prev.map(p => {
-                if (p.id === profileId) {
-                  return { ...p, images: [...p.images, ...newImages] };
-                }
-                return p;
+            // Reload the entire profile from file system to ensure data consistency
+            const reloadedProfile = await folderService.loadProfile(profileFolderName);
+            if (reloadedProfile) {
+              setProfiles(prev => {
+                const updated = prev.map(p => {
+                  if (p.id === profileId) {
+                    return { ...p, images: reloadedProfile.images };
+                  }
+                  return p;
+                });
+                console.log('✅ File system upload completed, profile reloaded from disk');
+                return updated;
               });
-              console.log('✅ File system upload completed, profiles updated');
-              return updated;
-            });
-            setAllImages(prev => [...prev, ...newImages]);
+              setAllImages(prev => {
+                // Remove old images from this profile and add reloaded ones
+                const otherImages = prev.filter(img => img.profileName !== profileFolderName);
+                return [...otherImages, ...reloadedProfile.images];
+              });
+            }
             alert(`✅ Added ${newImages.length} images successfully!`);
           } else {
             alert(`❌ Failed to add images`);
@@ -712,13 +845,22 @@ const App: React.FC = () => {
 
   const selectedProfile = profiles.find(p => p.id === selectedProfileId);
 
-  // Validate selected profile
+  // Validate selected profile - with additional safety checks
   React.useEffect(() => {
-    if (view === 'detail' && !selectedProfile && selectedProfileId) {
-      setView('list');
-      setSelectedProfileId(null);
+    if (view === 'detail' && selectedProfileId) {
+      if (!selectedProfile && !isLoading) {
+        console.warn('Selected profile not found, redirecting to list');
+        setView('list');
+        setSelectedProfileId(null);
+      }
     }
-  }, [selectedProfile, selectedProfileId, view]);
+  }, [selectedProfile, selectedProfileId, view, isLoading]);
+
+  // Additional safety check to prevent profile from disappearing during avatar operations
+  const safeSelectedProfile = React.useMemo(() => {
+    if (!selectedProfileId) return null;
+    return profiles.find(p => p.id === selectedProfileId) || null;
+  }, [profiles, selectedProfileId]);
 
   // Helper function to delete image from gallery view
   const handleDeleteImageFromGallery = async (imageId: string) => {
@@ -744,7 +886,11 @@ const App: React.FC = () => {
             return profile.images.find(img => img.id === id);
           }).filter(Boolean) as LocalImage[];
           
-          const newProfile = { ...profile, images: reorderedImages };
+          const newProfile = { 
+            ...profile, 
+            images: reorderedImages,
+            imageOrder: imageIds // Update imageOrder to match new order
+          };
           updatedProfile = newProfile;
           return newProfile;
         }
@@ -768,11 +914,12 @@ const App: React.FC = () => {
     // Update folder metadata if connected to real file system
     if (isFolderConnected && folderService.isConnected && updatedProfile) {
       try {
+        // Since imageIds are now filenames, use them directly
         await folderService.updateProfileMetadata(updatedProfile.name, {
           name: updatedProfile.name,
           note: updatedProfile.note,
           avatarId: updatedProfile.avatarId,
-          imageOrder: imageIds
+          imageOrder: imageIds // imageIds are already filenames
         });
       } catch (error) {
         console.error('Failed to save image order to file system:', error);
@@ -799,7 +946,7 @@ const App: React.FC = () => {
 
     switch (view) {
       case 'detail':
-        if (!selectedProfile) {
+        if (!safeSelectedProfile) {
           // Profile not found - redirect to home
           console.error('Profile not found, redirecting to home');
           setView('list');
@@ -816,16 +963,16 @@ const App: React.FC = () => {
         
         return (
           <ProfileDetailPage 
-            profile={selectedProfile}
+            profile={safeSelectedProfile}
             onBack={() => setView('list')}
-            onDeleteImage={(imageId) => handleDeleteImage(selectedProfile.id, imageId)}
-            onSetAvatar={(imageId) => handleSetAvatar(selectedProfile.id, imageId)}
-            onUploadImages={(files) => handleUploadImages(selectedProfile.id, files)}
-            onUpdateProfile={(data) => handleUpdateProfile(selectedProfile.id, data)}
-            onUpdateCropData={(cropData) => handleUpdateCropData(selectedProfile.id, cropData)}
-            onReorderImages={(imageIds) => handleReorderImages(selectedProfile.id, imageIds)}
+            onDeleteImage={(imageId) => handleDeleteImage(safeSelectedProfile.id, imageId)}
+            onSetAvatar={(imageId) => handleSetAvatar(safeSelectedProfile.id, imageId)}
+            onUploadImages={(files) => handleUploadImages(safeSelectedProfile.id, files)}
+            onUpdateProfile={(data) => handleUpdateProfile(safeSelectedProfile.id, data)}
+            onUpdateCropData={(cropData) => handleUpdateCropData(safeSelectedProfile.id, cropData)}
+            onReorderImages={(imageIds) => handleReorderImages(safeSelectedProfile.id, imageIds)}
             onDeleteProfile={() => {
-              handleDeleteProfile(selectedProfile.id);
+              handleDeleteProfile(safeSelectedProfile.id);
               setView('list'); // Go back to list after deletion
             }}
           />

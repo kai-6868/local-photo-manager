@@ -53,30 +53,86 @@ const ProfileCard: React.FC<ProfileCardProps> = ({ profile, onView }) => {
               if (imageDimensions.width === 0 || containerDimensions.width === 0) {
                 return { width: '100%', height: '100%', objectFit: 'cover' as const };
               }
-              
               const containerWidth = containerDimensions.width;
               const containerHeight = containerDimensions.height;
-              
-              // Simple object-cover logic for square containers
-              const scaleX = containerWidth / imageDimensions.width;
-              const scaleY = containerHeight / imageDimensions.height;
-              const scale = Math.max(scaleX, scaleY);
-              
-              // Get crop center from avatarCropData or default to center
-              const centerX = profile.avatarCropData?.centerX ?? imageDimensions.width / 2;
-              const centerY = profile.avatarCropData?.centerY ?? imageDimensions.height / 2;
-              
-              // Position image to show cropped area
-              const scaledCenterX = centerX * scale;
-              const scaledCenterY = centerY * scale;
-              const translateX = containerWidth / 2 - scaledCenterX;
-              const translateY = containerHeight / 2 - scaledCenterY;
-              
+              const imageWidth = imageDimensions.width;
+              const imageHeight = imageDimensions.height;
+
+              const imageAspectRatio = imageWidth / imageHeight;
+
+              let scaledImageWidth: number;
+              let scaledImageHeight: number;
+              let scale: number;
+
+              // BƯỚC 1: Tính kích thước ảnh sau khi scale (fit theo chiều ngắn hơn)
+              if (imageAspectRatio > 1) {
+                // Ảnh ngang: fit theo chiều cao container
+                scale = containerHeight / imageHeight;
+                scaledImageHeight = containerHeight;
+                scaledImageWidth = imageWidth * scale;
+              } else {
+                // Ảnh dọc hoặc vuông: fit theo chiều rộng container
+                scale = containerWidth / imageWidth;
+                scaledImageWidth = containerWidth;
+                scaledImageHeight = imageHeight * scale;
+              }
+
+              // BƯỚC 2: Xác định vị trí hiển thị
+              let translateX = 0;
+              let translateY = 0;
+
+              if (profile.avatarCropData) {
+                // CÓ CROP DATA: sử dụng vị trí user customize
+                const originalCenterX = profile.avatarCropData.centerX;
+                const originalCenterY = profile.avatarCropData.centerY;
+
+                // Chuyển center sang ảnh đã scale
+                const scaledCenterX = originalCenterX * scale;
+                const scaledCenterY = originalCenterY * scale;
+
+                // Tính translate để center này hiển thị ở giữa container
+                translateX = containerWidth / 2 - scaledCenterX;
+                translateY = containerHeight / 2 - scaledCenterY;
+
+                // Giới hạn translate không vượt quá biên container
+                translateX = Math.min(0, Math.max(containerWidth - scaledImageWidth, translateX));
+                translateY = Math.min(0, Math.max(containerHeight - scaledImageHeight, translateY));
+              } else {
+                // KHÔNG CÓ CROP DATA: Sử dụng default center cho container vuông
+                
+                if (imageAspectRatio > 1) {
+                  // Ảnh ngang: hiển thị vùng giữa theo chiều cao (container vuông)
+                  const defaultCenterX = imageHeight / 2;  // Trung tâm vùng vuông
+                  const defaultCenterY = imageHeight / 2;
+                  
+                  const scaledCenterX = defaultCenterX * scale;
+                  const scaledCenterY = defaultCenterY * scale;
+                  
+                  translateX = containerWidth / 2 - scaledCenterX;
+                  translateY = containerHeight / 2 - scaledCenterY;
+                } else {
+                  // Ảnh dọc/vuông: hiển thị vùng giữa theo chiều rộng (container vuông)
+                  const defaultCenterX = imageWidth / 2;   // Trung tâm vùng vuông
+                  const defaultCenterY = imageWidth / 2;
+                  
+                  const scaledCenterX = defaultCenterX * scale;
+                  const scaledCenterY = defaultCenterY * scale;
+                  
+                  translateX = containerWidth / 2 - scaledCenterX;
+                  translateY = containerHeight / 2 - scaledCenterY;
+                }
+              }
+
+              // Trả về style
               return {
-                width: `${imageDimensions.width * scale}px`,
-                height: `${imageDimensions.height * scale}px`,
-                transform: `translate(${translateX}px, ${translateY}px)`
+                width: `${scaledImageWidth}px`,
+                height: `${scaledImageHeight}px`,
+                transform: `translate(${translateX}px, ${translateY}px)`,
+                maxWidth: 'none',  // Đảm bảo không bị CSS constrain width  
+                minWidth: '0',     // Đảm bảo có thể scale tự do
+                flexShrink: '0'    // Không cho flex shrink
               };
+
             })()}
             onLoad={handleImageLoad}
             draggable={false}

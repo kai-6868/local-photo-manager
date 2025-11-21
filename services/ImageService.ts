@@ -60,10 +60,10 @@ export class ImageService {
         }, 'image/jpeg', 0.8);
       });
 
-      // Create file from blob
+      // Create file from blob using the same timestamped filename
       const thumbnailFile = new File([thumbnailBlob], fileName, { type: 'image/jpeg' });
 
-      // Save to thumbnails folder
+      // Save to thumbnails folder using the same filename as main image
       const thumbnailsHandle = await profileHandle.getDirectoryHandle('thumbnails');
       const thumbnailHandle = await thumbnailsHandle.getFileHandle(fileName, { create: true });
       const writable = await thumbnailHandle.createWritable();

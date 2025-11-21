@@ -72,14 +72,13 @@ export class ProfileService {
       if (avatarFile) {
         const avatarFileName = await this.fileService.saveImageToProfile(profileHandle, avatarFile);
         if (avatarFileName) {
-          const imageId = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          avatarId = imageId;
+          avatarId = avatarFileName;
           
           // Create thumbnail
           await this.imageService.createThumbnail(avatarFile, profileHandle, avatarFileName);
           
           images.push({
-            id: imageId,
+            id: avatarFileName,
             url: URL.createObjectURL(avatarFile),
             name: avatarFileName
           });
@@ -90,13 +89,11 @@ export class ProfileService {
       for (const imageFile of imageFiles) {
         const fileName = await this.fileService.saveImageToProfile(profileHandle, imageFile);
         if (fileName) {
-          const imageId = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          
           // Create thumbnail
           await this.imageService.createThumbnail(imageFile, profileHandle, fileName);
           
           images.push({
-            id: imageId,
+            id: fileName,
             url: URL.createObjectURL(imageFile),
             name: fileName
           });
@@ -112,6 +109,7 @@ export class ProfileService {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         imageCount: images.length
+        // Không set avatarCropData mặc định, để sử dụng default position
       };
 
       // Save metadata
@@ -187,9 +185,9 @@ export class ProfileService {
       for (const fileName of imageFileNames) {
         const file = await this.fileService.getImageFile(profileHandle, fileName);
         if (file) {
-          const imageId = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          // Use filename as imageId to match imageOrder in JSON
           images.push({
-            id: imageId,
+            id: fileName,
             url: URL.createObjectURL(file),
             name: fileName
           });
@@ -202,7 +200,8 @@ export class ProfileService {
         note: metadata.note,
         images,
         avatarId: metadata.avatarId || (images.length > 0 ? images[0].id : ''),
-        avatarCropData: metadata.avatarCropData
+        avatarCropData: metadata.avatarCropData,
+        imageOrder: metadata.imageOrder || images.map(img => img.id) // Create default imageOrder if not exist
       };
     } catch (error) {
       console.error('Error loading profile:', error);
@@ -264,23 +263,23 @@ export class ProfileService {
       for (const imageFile of imageFiles) {
         const fileName = await this.fileService.saveImageToProfile(profileHandle, imageFile);
         if (fileName) {
-          const imageId = `img_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-          
           // Create thumbnail
           await this.imageService.createThumbnail(imageFile, profileHandle, fileName);
           
           newImages.push({
-            id: imageId,
+            id: fileName,
             url: URL.createObjectURL(imageFile),
             name: fileName
           });
         }
       }
 
-      // Update metadata image count
+      // Update metadata image count correctly
       const metadata = await this.fileService.loadProfileMetadata(profileHandle);
       if (metadata) {
-        metadata.imageCount += newImages.length;
+        // Get actual count from file system instead of incrementing
+        const actualImageCount = await this.fileService.listProfileImages(profileHandle);
+        metadata.imageCount = actualImageCount.length;
         metadata.updatedAt = new Date().toISOString();
         await this.fileService.saveProfileMetadata(profileHandle, metadata);
       }
@@ -311,10 +310,13 @@ export class ProfileService {
       const thumbnailDeleted = await this.fileService.deleteImageFromProfile(profileHandle, fileName, 'thumbnails');
 
       if (imageDeleted) {
-        // Update metadata image count
+        // Update metadata image count with actual count from file system
         const metadata = await this.fileService.loadProfileMetadata(profileHandle);
         if (metadata) {
-          metadata.imageCount = Math.max(0, metadata.imageCount - 1);
+          const actualImageCount = await this.fileService.listProfileImages(profileHandle);
+          const imageOrder = actualImageCount; // Use actual filenames for order
+          metadata.imageCount = actualImageCount.length;
+          metadata.imageOrder = imageOrder;
           metadata.updatedAt = new Date().toISOString();
           await this.fileService.saveProfileMetadata(profileHandle, metadata);
         }
@@ -349,6 +351,7 @@ export class ProfileService {
 
       // Update avatar ID
       metadata.avatarId = imageId;
+      // Không set avatarCropData mặc định, để user tự điều chỉnh nếu cần
       metadata.updatedAt = new Date().toISOString();
 
       // Save metadata

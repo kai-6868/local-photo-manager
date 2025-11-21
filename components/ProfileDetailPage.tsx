@@ -49,7 +49,16 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [draggedImageId, setDraggedImageId] = useState<string | null>(null);
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null);
-  const [orderedImages, setOrderedImages] = useState<LocalImage[]>(profile.images);
+  // Initialize ordered images according to imageOrder from profile JSON
+  const [orderedImages, setOrderedImages] = useState<LocalImage[]>(() => {
+    if (profile.imageOrder) {
+      // Sort images according to imageOrder array
+      return profile.imageOrder
+        .map(imageId => profile.images.find(img => img.id === imageId))
+        .filter((img): img is LocalImage => img !== undefined);
+    }
+    return profile.images;
+  });
   
   // Avatar Cropping State
   const [isDraggingAvatar, setIsDraggingAvatar] = useState(false);
@@ -65,10 +74,18 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Sync ordered images with profile changes
+  // Sync ordered images with profile changes, respecting imageOrder
   useEffect(() => {
-    setOrderedImages(profile.images);
-  }, [profile.images, profile.id]);
+    if (profile.imageOrder) {
+      // Sort images according to imageOrder array
+      const sortedImages = profile.imageOrder
+        .map(imageId => profile.images.find(img => img.id === imageId))
+        .filter((img): img is LocalImage => img !== undefined);
+      setOrderedImages(sortedImages);
+    } else {
+      setOrderedImages(profile.images);
+    }
+  }, [profile.images, profile.id, profile.imageOrder]);
 
   // Handle responsive column count
   useEffect(() => {
@@ -99,8 +116,10 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
     
     const columns: LocalImage[][] = Array.from({ length: columnCount }, () => []);
     
-    // Distribute images sequentially: column 0, 1, 2, ..., then back to 0
+    // Distribute images by rows: fill row 1 completely, then row 2, etc.
+    // This ensures left-to-right, top-to-bottom order according to imageOrder
     orderedImages.forEach((image, index) => {
+      const rowIndex = Math.floor(index / columnCount);
       const columnIndex = index % columnCount;
       columns[columnIndex].push(image);
     });
@@ -141,13 +160,14 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
     };
   }, [profile.id]);
 
-  // Reset states when profile changes
+  // Reset states when profile changes or avatar changes
   useEffect(() => {
     setImageDimensions({ width: 0, height: 0 });
     setContainerDimensions({ width: 320, height: 320 });
     setIsDraggingAvatar(false);
     setActiveCropData(null);
-  }, [profile.id]);
+    console.log(`🔄 Reset avatar states for profile: ${profile.name}, avatar: ${profile.avatarId}`);
+  }, [profile.id, profile.avatarId]); // Thêm profile.avatarId để reset khi đổi avatar
 
   // Handle avatar drag for cropping
   const handleAvatarPointerDown = useCallback((e: React.PointerEvent) => {
@@ -161,9 +181,12 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
     setIsDraggingAvatar(true);
     setLastMousePos({ x: e.clientX, y: e.clientY });
     
+    const imageAspectRatio = imageDimensions.width / imageDimensions.height;
+    
     const currentCrop = profile.avatarCropData || {
-      centerX: imageDimensions.width / 2,
-      centerY: imageDimensions.height / 2
+      // Sử dụng default center phù hợp với container vuông
+      centerX: imageAspectRatio > 1 ? imageDimensions.height / 2 : imageDimensions.width / 2,
+      centerY: imageAspectRatio > 1 ? imageDimensions.height / 2 : imageDimensions.width / 2
     };
     setActiveCropData(currentCrop);
     
@@ -436,28 +459,91 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
                     const { width: containerWidth, height: containerHeight } = containerDimensions;
                     const imageAspectRatio = imageDimensions.width / imageDimensions.height;
                     
+                    // BƯỚC 1: Tính scale factor (fit theo chiều ngắn hơn)
                     let scale;
                     if (imageAspectRatio > 1) {
+                      // Ảnh ngang: fit theo height của container
                       scale = containerHeight / imageDimensions.height;
-                    } else if (imageAspectRatio < 1) {
-                      scale = containerWidth / imageDimensions.width;
                     } else {
-                      scale = Math.min(containerWidth / imageDimensions.width, containerHeight / imageDimensions.height);
+                      // Ảnh dọc/vuông: fit theo width của container
+                      scale = containerWidth / imageDimensions.width;
                     }
                     
-                    const cropData = isDraggingAvatar && activeCropData ? activeCropData : profile.avatarCropData;
-                    const centerX = cropData?.centerX ?? imageDimensions.width / 2;
-                    const centerY = cropData?.centerY ?? imageDimensions.height / 2;
+                    // BƯỚC 2: Tính kích thước ảnh sau khi scale
+                    const scaledImageWidth = imageDimensions.width * scale;
+                    const scaledImageHeight = imageDimensions.height * scale;
                     
-                    const scaledCenterX = centerX * scale;
-                    const scaledCenterY = centerY * scale;
-                    const translateX = containerWidth / 2 - scaledCenterX;
-                    const translateY = containerHeight / 2 - scaledCenterY;
+                    // BƯỚC 3: Xác định vị trí hiển thị (translateX, translateY)
+                    let translateX, translateY;
+                    
+                    // Kiểm tra xem có crop data hay đang drag không
+                    const cropData = isDraggingAvatar && activeCropData ? activeCropData : profile.avatarCropData;
+                    
+                    if (cropData) {
+                      // CÓ CROP DATA: Sử dụng vị trí đã được user customize
+                      
+                      // Vị trí center trên ảnh gốc mà user đã chọn
+                      const originalCenterX = cropData.centerX;
+                      const originalCenterY = cropData.centerY;
+                      
+                      // Chuyển đổi center sang ảnh đã scale
+                      const scaledCenterX = originalCenterX * scale;
+                      const scaledCenterY = originalCenterY * scale;
+                      
+                      // Tính translate để center này hiển thị ở giữa container
+                      translateX = containerWidth / 2 - scaledCenterX;
+                      translateY = containerHeight / 2 - scaledCenterY;
+                      
+                    } else {
+                      // CHƯA CÓ CROP DATA: Sử dụng default center cho container vuông
+                      
+                      if (imageAspectRatio > 1) {
+                        // Ảnh ngang: hiển thị vùng giữa theo chiều cao (container vuông)
+                        const defaultCenterX = imageDimensions.height / 2;  // Trung tâm vùng vuông
+                        const defaultCenterY = imageDimensions.height / 2;
+                        
+                        const scaledCenterX = defaultCenterX * scale;
+                        const scaledCenterY = defaultCenterY * scale;
+                        
+                        translateX = containerWidth / 2 - scaledCenterX;
+                        translateY = containerHeight / 2 - scaledCenterY;
+                      } else {
+                        // Ảnh dọc/vuông: hiển thị vùng giữa theo chiều rộng (container vuông)
+                        const defaultCenterX = imageDimensions.width / 2;   // Trung tâm vùng vuông
+                        const defaultCenterY = imageDimensions.width / 2;
+                        
+                        const scaledCenterX = defaultCenterX * scale;
+                        const scaledCenterY = defaultCenterY * scale;
+                        
+                        translateX = containerWidth / 2 - scaledCenterX;
+                        translateY = containerHeight / 2 - scaledCenterY;
+                      }
+                    }
+                    
+                    // BƯỚC 4: Tính vùng hiển thị trên ảnh đã scale (để debug/hiểu rõ)
+                    const visibleAreaOnScaledImage = {
+                      startX: Math.max(0, -translateX),
+                      endX: Math.min(scaledImageWidth, containerWidth - translateX),
+                      startY: Math.max(0, -translateY), 
+                      endY: Math.min(scaledImageHeight, containerHeight - translateY)
+                    };
+                    
+                    // Debug log (có thể bỏ comment để xem)
+                    // console.log('Avatar Display Info:', {
+                    //   originalSize: `${imageDimensions.width}x${imageDimensions.height}`,
+                    //   scaledSize: `${scaledImageWidth.toFixed(1)}x${scaledImageHeight.toFixed(1)}`,
+                    //   containerSize: `${containerWidth}x${containerHeight}`,
+                    //   translate: `${translateX.toFixed(1)}, ${translateY.toFixed(1)}`,
+                    //   visibleArea: `X: ${visibleAreaOnScaledImage.startX.toFixed(1)}-${visibleAreaOnScaledImage.endX.toFixed(1)}, Y: ${visibleAreaOnScaledImage.startY.toFixed(1)}-${visibleAreaOnScaledImage.endY.toFixed(1)}`
+                    // });
                     
                     return {
-                      width: `${imageDimensions.width * scale}px`,
-                      height: `${imageDimensions.height * scale}px`,
-                      transform: `translate(${translateX}px, ${translateY}px)`
+                      width: `${scaledImageWidth}px`,
+                      height: `${scaledImageHeight}px`,
+                      transform: `translate(${translateX}px, ${translateY}px)`,
+                      maxWidth: 'none',  // Đảm bảo không bị CSS constrain width
+                      minWidth: '0',     // Đảm bảo có thể scale tự do
+                      flexShrink: '0'    // Không cho flex shrink
                     };
                   }, [imageDimensions, containerDimensions, isDraggingAvatar, activeCropData, profile.avatarCropData])}
                   onLoad={handleImageLoad}

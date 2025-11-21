@@ -3,6 +3,7 @@
  */
 
 import { Profile, LocalImage, CropData } from '../types';
+import FileSystemService from './FileSystemService';
 
 export interface FolderStructure {
   mainFolderHandle: FileSystemDirectoryHandle;
@@ -26,9 +27,11 @@ export class FolderService {
   private static instance: FolderService;
   private mainFolderHandle: FileSystemDirectoryHandle | null = null;
   private isFileSystemSupported = false;
+  private fileSystemService: FileSystemService;
 
   constructor() {
     this.isFileSystemSupported = 'showDirectoryPicker' in window;
+    this.fileSystemService = FileSystemService.getInstance();
   }
 
   public static getInstance(): FolderService {
@@ -138,7 +141,7 @@ export class FolderService {
             const objectUrl = URL.createObjectURL(file);
             
             images.push({
-              id: `img_${profileFolderName}_${fileName}`,
+              id: `${fileName}`,
               url: objectUrl,
               name: fileName,
               profileName: profileFolderName
@@ -182,7 +185,8 @@ export class FolderService {
         note: config.note,
         images,
         avatarId,
-        avatarCropData: config.avatarCropData
+        avatarCropData: config.avatarCropData,
+        imageOrder: config.imageOrder || images.map(img => img.id) // Load imageOrder or create default
       };
     } catch (error) {
       console.error(`Error loading complete profile "${profileFolderName}":`, error);
@@ -331,6 +335,15 @@ export class FolderService {
       // Delete the image file
       await imagesHandle.removeEntry(fileName);
       console.log(`🗑️ Deleted image file: ${fileName} from ${profileFolderName}`);
+      
+      // Update imageCount and imageOrder in profile metadata after deletion
+      const remainingImages = await this.loadProfileImages(profileFolderName);
+      const imageOrder = remainingImages.map(img => img.name);
+      await this.updateProfileMetadata(profileFolderName, {
+        imageCount: remainingImages.length,
+        imageOrder: imageOrder
+      });
+      
       return true;
     } catch (error) {
       console.error(`Error deleting image "${fileName}" from "${profileFolderName}":`, error);
@@ -491,7 +504,7 @@ export class FolderService {
   }
 
   /**
-   * Add new images to a profile
+   * Add new images to a profile with timestamp filenames
    */
   async addImagesToProfile(profileFolderName: string, files: File[]): Promise<LocalImage[]> {
     if (!this.mainFolderHandle) {
@@ -508,27 +521,32 @@ export class FolderService {
       
       for (const file of files) {
         try {
-          const imageHandle = await imagesHandle.getFileHandle(file.name, { create: true });
-          const writable = await imageHandle.createWritable();
-          await writable.write(file);
-          await writable.close();
+          // Use FileSystemService to save with timestamp filename
+          const timestampFileName = await this.fileSystemService.saveImageToProfile(profileHandle, file, 'images');
           
-          newImages.push({
-            id: `img_${profileFolderName}_${file.name}`,
-            url: URL.createObjectURL(file),
-            name: file.name,
-            profileName: profileFolderName
-          });
-          
-          console.log(`✅ Added image: ${file.name} to ${profileFolderName}`);
+          if (timestampFileName) {
+            newImages.push({
+              id: `${timestampFileName}`,
+              url: URL.createObjectURL(file),
+              name: timestampFileName,
+              profileName: profileFolderName
+            });
+            
+            console.log(`✅ Added image with timestamp: ${timestampFileName} to ${profileFolderName}`);
+          } else {
+            console.error(`❌ Failed to save image with timestamp: ${file.name}`);
+          }
         } catch (fileError) {
           console.error(`❌ Failed to add image "${file.name}":`, fileError);
         }
       }
       
-      // Update image count in profile metadata
+      // Update image count and imageOrder in profile metadata
+      const currentImages = await this.loadProfileImages(profileFolderName);
+      const imageOrder = currentImages.map(img => img.name); // Use image filename for order
       await this.updateProfileMetadata(profileFolderName, {
-        imageCount: (await this.loadProfileImages(profileFolderName)).length + newImages.length
+        imageCount: currentImages.length, // Current images already includes the newly added images
+        imageOrder: imageOrder
       });
       
       return newImages;

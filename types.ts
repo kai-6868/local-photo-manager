@@ -18,4 +18,5 @@ export interface Profile {
   avatarId: string;
   avatarCropData?: CropData; // Crop information for avatar
   images: LocalImage[];
+  imageOrder?: string[]; // Order of images for display
 }

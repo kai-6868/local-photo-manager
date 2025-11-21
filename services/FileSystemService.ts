@@ -98,19 +98,19 @@ export class FileSystemService {
   }
 
   /**
-   * Save image file to profile directory
+   * Save image file to profile directory with timestamp filename
    */
   async saveImageToProfile(profileHandle: FileSystemDirectoryHandle, file: File, subfolder: 'images' | 'thumbnails' = 'images'): Promise<string | null> {
     try {
       const imagesHandle = await profileHandle.getDirectoryHandle(subfolder);
-      const sanitizedName = this.sanitizeFileName(file.name);
-      const imageHandle = await imagesHandle.getFileHandle(sanitizedName, { create: true });
+      const timestampFileName = this.generateTimestampFileName(file.name);
+      const imageHandle = await imagesHandle.getFileHandle(timestampFileName, { create: true });
       
       const writable = await imageHandle.createWritable();
       await writable.write(file);
       await writable.close();
       
-      return sanitizedName;
+      return timestampFileName;
     } catch (error) {
       console.error('Error saving image:', error);
       return null;
@@ -211,6 +211,24 @@ export class FileSystemService {
       console.error('Error deleting profile:', error);
       return false;
     }
+  }
+
+  /**
+   * Generate filename with timestamp and file extension
+   */
+  private generateTimestampFileName(originalFileName: string): string {
+    const now = new Date();
+    const timestamp = now.toISOString()
+      .replace(/T/, '_')
+      .replace(/:/g, '')
+      .replace(/-/g, '')
+      .split('.')[0]; // Format: YYYYMMDD_HHMMSS
+    
+    // Get file extension from original filename
+    const lastDotIndex = originalFileName.lastIndexOf('.');
+    const extension = lastDotIndex !== -1 ? originalFileName.substring(lastDotIndex) : '.jpg';
+    
+    return `${timestamp}${extension}`;
   }
 
   /**
