@@ -30,12 +30,21 @@ const HomePage: React.FC<HomePageProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Debug logging
+  console.log('🏠 HomePage render:', {
+    profilesCount: profiles.length,
+    searchTerm,
+    serviceStatus
+  });
+
   const filteredProfiles = useMemo(() => {
     if (!searchTerm) return profiles;
     return profiles.filter(profile =>
       profile.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
   }, [profiles, searchTerm]);
+
+  console.log('🔍 Filtered profiles count:', filteredProfiles.length);
 
   return (
     <div className="container mx-auto px-4 py-8">
@@ -116,9 +125,23 @@ const HomePage: React.FC<HomePageProps> = ({
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 md:gap-4">
         {/* Existing Profile Cards */}
-        {filteredProfiles.map(profile => (
-          <ProfileCard key={profile.id} profile={profile} onView={() => onViewProfile(profile.id)} />
-        ))}
+        {filteredProfiles.map(profile => {
+          try {
+            return (
+              <ProfileCard key={profile.id} profile={profile} onView={() => onViewProfile(profile.id)} />
+            );
+          } catch (error) {
+            console.error('❌ Error rendering profile card:', error, profile);
+            return (
+              <div key={profile.id || 'error'} className="aspect-square bg-red-800 rounded-xl p-4 flex items-center justify-center">
+                <div className="text-center">
+                  <XIcon className="w-8 h-8 text-red-400 mx-auto mb-2" />
+                  <p className="text-xs text-red-400">Error</p>
+                </div>
+              </div>
+            );
+          }
+        })}
         
         {/* Add Profile Card - Always last */}
         <AddProfileCard onAddProfile={onAddProfile} />

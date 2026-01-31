@@ -173,20 +173,38 @@ export class FolderService {
 
       const images = await this.loadProfileImages(profileFolderName);
       
-      // Find avatar image
-      let avatarId = config.avatarId;
-      if (!avatarId && images.length > 0) {
-        avatarId = images[0].id;
+      // Use avatar from config only, don't auto-assign
+      let avatarId = config.avatarId || '';
+
+      // Sort images according to imageOrder if it exists
+      let sortedImages = images;
+      if (config.imageOrder && config.imageOrder.length > 0) {
+        console.log(`📋 Found imageOrder in config:`, config.imageOrder);
+        console.log(`📁 Loaded images:`, images.map(img => img.name));
+        
+        // Sort images according to imageOrder
+        sortedImages = config.imageOrder
+          .map(imageId => images.find(img => img.id === imageId))
+          .filter(Boolean) as LocalImage[];
+        
+        // Add any images not in imageOrder to the end (newly added images)
+        const imagesNotInOrder = images.filter(img => !config.imageOrder?.includes(img.id));
+        sortedImages.push(...imagesNotInOrder);
+        
+        console.log(`🔄 Images sorted by imageOrder:`, sortedImages.map(img => img.name));
+        console.log(`🆕 Images not in order (added to end):`, imagesNotInOrder.map(img => img.name));
+      } else {
+        console.log(`📋 No imageOrder found, using default order`);
       }
 
       return {
         id: config.id,
         name: config.name,
         note: config.note,
-        images,
+        images: sortedImages,
         avatarId,
         avatarCropData: config.avatarCropData,
-        imageOrder: config.imageOrder || images.map(img => img.id) // Load imageOrder or create default
+        imageOrder: config.imageOrder || sortedImages.map(img => img.id) // Use sorted images for default order
       };
     } catch (error) {
       console.error(`Error loading complete profile "${profileFolderName}":`, error);
@@ -199,19 +217,27 @@ export class FolderService {
    */
   async loadAllProfiles(): Promise<Profile[]> {
     try {
+      console.log('📂 FolderService: Starting to load all profiles...');
       const profileFolderNames = await this.scanForProfiles();
+      console.log('📁 Found profile folders:', profileFolderNames);
+      
       const profiles: Profile[] = [];
 
       for (const folderName of profileFolderNames) {
+        console.log(`📄 Loading profile from folder: ${folderName}`);
         const profile = await this.loadProfile(folderName);
         if (profile) {
           profiles.push(profile);
+          console.log(`✅ Successfully loaded profile: ${profile.name} (${profile.images.length} images)`);
+        } else {
+          console.warn(`⚠️ Failed to load profile from folder: ${folderName}`);
         }
       }
 
+      console.log(`📊 FolderService: Loaded ${profiles.length} profiles total`);
       return profiles;
     } catch (error) {
-      console.error('Error loading all profiles:', error);
+      console.error('❌ FolderService: Error loading all profiles:', error);
       return [];
     }
   }
@@ -398,10 +424,10 @@ export class FolderService {
       await writable.write(JSON.stringify(updatedConfig, null, 2));
       await writable.close();
       
-      console.log(`✅ Updated profile metadata for: ${profileFolderName}`);
+      console.log(`✅ Successfully updated profile metadata for: ${profileFolderName}`);
       return true;
     } catch (error) {
-      console.error(`Error updating profile metadata for "${profileFolderName}":`, error);
+      console.error(`❌ Error updating profile metadata for "${profileFolderName}":`, error);
       return false;
     }
   }
@@ -543,11 +569,33 @@ export class FolderService {
       
       // Update image count and imageOrder in profile metadata
       const currentImages = await this.loadProfileImages(profileFolderName);
-      const imageOrder = currentImages.map(img => img.name); // Use image filename for order
+      
+      // Load current metadata to get existing imageOrder
+      const currentConfig = await this.loadProfileConfig(profileFolderName);
+      let updatedImageOrder: string[] = [];
+      
+      if (currentConfig && currentConfig.imageOrder) {
+        // Keep existing order and add new images at the end
+        updatedImageOrder = [...currentConfig.imageOrder];
+        
+        // Add any new images not already in imageOrder
+        const newImageNames = newImages.map(img => img.name);
+        const imagesToAdd = newImageNames.filter(name => !updatedImageOrder.includes(name));
+        updatedImageOrder.push(...imagesToAdd);
+        
+        console.log(`📋 Preserved existing imageOrder and added ${imagesToAdd.length} new images:`, imagesToAdd);
+      } else {
+        // No existing imageOrder, create new one with all images
+        updatedImageOrder = currentImages.map(img => img.name);
+        console.log(`📋 Created new imageOrder with all images`);
+      }
+      
       await this.updateProfileMetadata(profileFolderName, {
-        imageCount: currentImages.length, // Current images already includes the newly added images
-        imageOrder: imageOrder
+        imageCount: currentImages.length, 
+        imageOrder: updatedImageOrder
       });
+      
+      console.log(`✅ Updated metadata: imageCount=${currentImages.length}, imageOrder length=${updatedImageOrder.length}`);
       
       return newImages;
     } catch (error) {

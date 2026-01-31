@@ -40,7 +40,7 @@ const generateMockData = async (): Promise<Profile[]> => {
             id: profileId,
             ...p,
             images,
-            avatarId: images[0].id,
+            avatarId: '', // Don't auto-assign avatar in mock data
         });
     }
   }
@@ -251,7 +251,7 @@ const App: React.FC = () => {
           id: `profile_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           name,
           note,
-          avatarId: savedImages.length > 0 ? savedImages[0].id : '',
+          avatarId: '', // Don't auto-assign avatar, let user choose
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
           imageCount: savedImages.length,
@@ -307,7 +307,7 @@ const App: React.FC = () => {
           name,
           note,
           images: newImages,
-          avatarId: newImages.length > 0 ? newImages[0].id : ''
+          avatarId: '' // Don't auto-assign avatar, let user choose
         };
         
         setProfiles(prev => [newProfile, ...prev]);
@@ -475,10 +475,10 @@ const App: React.FC = () => {
               return true;
             });
             
-            // If the deleted image was the avatar, set a new avatar
+            // If the deleted image was the avatar, clear avatar (don't auto-assign)
             let newAvatarId = p.avatarId;
-            if (p.avatarId === imageId && updatedImages.length > 0) {
-              newAvatarId = updatedImages[0].id;
+            if (p.avatarId === imageId) {
+              newAvatarId = ''; // Clear avatar instead of auto-assigning
             }
             
             return { ...p, images: updatedImages, avatarId: newAvatarId };
@@ -707,24 +707,43 @@ const App: React.FC = () => {
       folderService.addImagesToProfile(profileFolderName, files)
         .then(async newImages => {
           if (newImages.length > 0) {
+            console.log(`✅ ${newImages.length} images added to file system, reloading profile...`);
+            
             // Reload the entire profile from file system to ensure data consistency
             const reloadedProfile = await folderService.loadProfile(profileFolderName);
             if (reloadedProfile) {
+              console.log(`📁 Profile reloaded from disk:`, reloadedProfile);
+              console.log(`📋 Reloaded images count: ${reloadedProfile.images.length}`);
+              console.log(`📋 Reloaded imageOrder:`, reloadedProfile.imageOrder);
+              
               setProfiles(prev => {
                 const updated = prev.map(p => {
                   if (p.id === profileId) {
-                    return { ...p, images: reloadedProfile.images };
+                    // Update with reloaded data but preserve original profile ID
+                    const updatedProfile = { 
+                      ...reloadedProfile, 
+                      id: profileId,
+                      // Ensure imageOrder is properly set
+                      imageOrder: reloadedProfile.imageOrder || reloadedProfile.images.map(img => img.id)
+                    };
+                    console.log(`🔄 Updated profile state:`, updatedProfile);
+                    return updatedProfile;
                   }
                   return p;
                 });
-                console.log('✅ File system upload completed, profile reloaded from disk');
+                console.log('✅ File system upload completed, profile state updated');
                 return updated;
               });
+              
               setAllImages(prev => {
                 // Remove old images from this profile and add reloaded ones
                 const otherImages = prev.filter(img => img.profileName !== profileFolderName);
-                return [...otherImages, ...reloadedProfile.images];
+                const updatedAllImages = [...otherImages, ...reloadedProfile.images];
+                console.log(`🖼️ Updated allImages: ${updatedAllImages.length} total images`);
+                return updatedAllImages;
               });
+            } else {
+              console.error(`❌ Failed to reload profile: ${profileFolderName}`);
             }
             alert(`✅ Added ${newImages.length} images successfully!`);
           } else {
@@ -749,30 +768,40 @@ const App: React.FC = () => {
     }
 
     try {
+      console.log('🔄 Starting folder connection...');
       setIsLoading(true);
       
       // Connect to main folder
       const connected = await folderService.connectToMainFolder();
       if (!connected) {
+        console.log('❌ User cancelled folder selection');
         setIsLoading(false);
         return; // User cancelled
       }
 
+      console.log('✅ Folder connected successfully');
       setIsFolderConnected(true);
       setConnectedFolderName(folderService.folderName);
 
       // Load all profiles from the folder
+      console.log('📂 Loading profiles from folder...');
       const loadedProfiles = await folderService.loadAllProfiles();
       const loadedImages = await folderService.loadAllImages();
+
+      console.log(`📊 Loaded ${loadedProfiles.length} profiles and ${loadedImages.length} images`);
+      console.log('Loaded profiles:', loadedProfiles);
 
       setProfiles(loadedProfiles);
       setAllImages(loadedImages);
 
+      console.log('🔄 State updated with loaded data');
+
       alert(`✅ Connected to "${folderService.folderName}" - Found ${loadedProfiles.length} profiles with ${loadedImages.length} images total`);
     } catch (error) {
-      console.error('Error connecting to folder:', error);
+      console.error('❌ Error connecting to folder:', error);
       alert('Failed to connect to folder. Please try again.');
     } finally {
+      console.log('🏁 Finishing folder load, setting isLoading to false');
       setIsLoading(false);
     }
   };
@@ -876,8 +905,9 @@ const App: React.FC = () => {
 
   // Handle reordering images within a profile
   const handleReorderImages = async (profileId: string, imageIds: string[]) => {
-    let updatedProfile: Profile | null = null;
+    console.log(`🔄 Starting reorder for profile ${profileId} with imageIds:`, imageIds);
     
+    // Immediately update UI state for responsive experience
     setProfiles(prev => {
       const updated = prev.map(profile => {
         if (profile.id === profileId) {
@@ -891,7 +921,7 @@ const App: React.FC = () => {
             images: reorderedImages,
             imageOrder: imageIds // Update imageOrder to match new order
           };
-          updatedProfile = newProfile;
+          console.log(`📝 Updated profile in memory (immediate UI update)`);
           return newProfile;
         }
         return profile;
@@ -901,34 +931,62 @@ const App: React.FC = () => {
     });
 
     // Update allImages array to maintain consistency
+    const updatedProfile = profiles.find(p => p.id === profileId);
     if (updatedProfile) {
+      const reorderedImages = imageIds.map(id => {
+        return updatedProfile.images.find(img => img.id === id);
+      }).filter(Boolean) as LocalImage[];
+      
       setAllImages(prev => {
         const otherImages = prev.filter(img => 
-          !updatedProfile!.images.some(profImg => profImg.id === img.id)
+          !reorderedImages.some(profImg => profImg.id === img.id)
         );
         
-        return [...otherImages, ...updatedProfile!.images];
+        return [...otherImages, ...reorderedImages];
       });
     }
 
-    // Update folder metadata if connected to real file system
+    // Save to file system in background (don't block UI)
     if (isFolderConnected && folderService.isConnected && updatedProfile) {
-      try {
-        // Since imageIds are now filenames, use them directly
-        await folderService.updateProfileMetadata(updatedProfile.name, {
-          name: updatedProfile.name,
-          note: updatedProfile.note,
-          avatarId: updatedProfile.avatarId,
-          imageOrder: imageIds // imageIds are already filenames
-        });
-      } catch (error) {
-        console.error('Failed to save image order to file system:', error);
-      }
+      // Use setTimeout to make this truly async and not block the UI
+      setTimeout(async () => {
+        try {
+          const profileFolderName = updatedProfile.images[0]?.profileName || 
+                                    updatedProfile.name.replace(/[<>:"/\\|?*]/g, '_').replace(/\s+/g, '_');
+          
+          console.log(`💾 Saving image order to file system in background for folder: ${profileFolderName}`);
+          
+          const updateResult = await folderService.updateProfileMetadata(profileFolderName, {
+            imageOrder: imageIds
+          });
+          
+          if (updateResult) {
+            console.log(`✅ Successfully saved image order in background for profile: ${profileFolderName}`);
+          } else {
+            console.error(`❌ Failed to save image order in background for profile: ${profileFolderName}`);
+          }
+        } catch (error) {
+          console.error('Failed to save image order to file system in background:', error);
+        }
+      }, 0); // Run in next tick
+    } else {
+      console.log(`📝 Image order updated in memory only (not connected to file system)`);
     }
   };
 
   const renderView = () => {
+    console.log('🎨 Rendering view:', view);
+    console.log('📊 Current state:', {
+      isLoading,
+      profilesCount: profiles.length,
+      allImagesCount: allImages.length,
+      selectedProfileId,
+      isFolderConnected,
+      connectedFolderName
+    });
+
     if (isLoading) {
+      console.log('⏳ Showing loading screen');
       return (
         <div className="flex items-center justify-center h-screen">
           <div className="flex flex-col items-center">
@@ -944,7 +1002,8 @@ const App: React.FC = () => {
       );
     }
 
-    switch (view) {
+    try {
+      switch (view) {
       case 'detail':
         if (!safeSelectedProfile) {
           // Profile not found - redirect to home
@@ -990,6 +1049,7 @@ const App: React.FC = () => {
         );
       case 'list':
       default:
+        console.log('🏠 Rendering HomePage');
         return (
           <HomePage 
             profiles={profiles} 
@@ -1006,6 +1066,24 @@ const App: React.FC = () => {
           />
         );
     }
+  } catch (error) {
+    console.error('❌ Error in renderView:', error);
+    // Fallback UI in case of render error
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <p className="text-lg text-red-400">Something went wrong</p>
+          <p className="text-sm text-gray-500">Check console for details</p>
+          <button 
+            onClick={() => window.location.reload()} 
+            className="mt-4 px-4 py-2 bg-cyan-500 text-white rounded hover:bg-cyan-600"
+          >
+            Reload Page
+          </button>
+        </div>
+      </div>
+    );
+  }
   };
 
   return <div className="min-h-screen bg-gray-900">{renderView()}</div>;

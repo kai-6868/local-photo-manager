@@ -105,7 +105,7 @@ export class ProfileService {
         id: profileId,
         name,
         note,
-        avatarId: avatarId || (images.length > 0 ? images[0].id : ''),
+        avatarId: avatarId || '', // Only use explicitly provided avatar
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         imageCount: images.length
@@ -199,7 +199,7 @@ export class ProfileService {
         name: metadata.name,
         note: metadata.note,
         images,
-        avatarId: metadata.avatarId || (images.length > 0 ? images[0].id : ''),
+        avatarId: metadata.avatarId || '', // Don't auto-assign avatar
         avatarCropData: metadata.avatarCropData,
         imageOrder: metadata.imageOrder || images.map(img => img.id) // Create default imageOrder if not exist
       };
@@ -433,6 +433,38 @@ export class ProfileService {
       avatarFile,
       otherImages
     );
+  }
+
+  /**
+   * Update image order for a profile
+   */
+  async updateImageOrder(profileName: string, imageIds: string[]): Promise<boolean> {
+    if (!this.rootDirectoryHandle) {
+      throw new Error('ProfileService not initialized');
+    }
+
+    try {
+      const profileHandle = await this.fileService.getProfileDirectory(this.rootDirectoryHandle, profileName);
+      if (!profileHandle) {
+        return false;
+      }
+
+      // Load existing metadata
+      const metadata = await this.fileService.loadProfileMetadata(profileHandle);
+      if (!metadata) {
+        return false;
+      }
+
+      // Update image order
+      metadata.imageOrder = imageIds;
+      metadata.updatedAt = new Date().toISOString();
+
+      // Save updated metadata
+      return await this.fileService.saveProfileMetadata(profileHandle, metadata);
+    } catch (error) {
+      console.error('Error updating image order:', error);
+      return false;
+    }
   }
 
   /**

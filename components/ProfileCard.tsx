@@ -9,7 +9,20 @@ interface ProfileCardProps {
 }
 
 const ProfileCard: React.FC<ProfileCardProps> = ({ profile, onView }) => {
-  const avatar = profile.images.find(img => img.id === profile.avatarId);
+  // Safety check for profile
+  if (!profile || !profile.id || !profile.name) {
+    console.error('❌ Invalid profile data:', profile);
+    return (
+      <div className="aspect-square bg-gray-800 rounded-xl p-4 flex items-center justify-center border border-red-500">
+        <div className="text-center">
+          <UserIcon className="w-8 h-8 text-red-400 mx-auto mb-2" />
+          <p className="text-xs text-red-400">Invalid Profile</p>
+        </div>
+      </div>
+    );
+  }
+
+  const avatar = profile.images?.find(img => img.id === profile.avatarId);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
   const [containerDimensions, setContainerDimensions] = useState({ width: 0, height: 0 });
   const imageRef = useRef<HTMLImageElement>(null);

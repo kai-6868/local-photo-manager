@@ -4,7 +4,15 @@
   "version": "1.0.0",
   "type": "module",
   "private": true,
-  "keywords": ["photo", "gallery", "profile", "local", "file-system", "react", "typescript"],
+  "keywords": [
+    "photo",
+    "gallery",
+    "profile",
+    "local",
+    "file-system",
+    "react",
+    "typescript"
+  ],
   "author": "Local Photo Manager",
   "license": "MIT",
   "scripts": {
@@ -21,6 +29,7 @@
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "baseline-browser-mapping": "^2.9.19",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }
