@@ -1,5 +1,5 @@
 
-import React, { useState, useRef, useCallback, DragEvent, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useCallback, DragEvent, useEffect, useLayoutEffect, useMemo } from 'react';
 import { Profile, LocalImage, CropData } from '../types';
 import Lightbox from './Lightbox';
 import ImageWithFallback from './ImageWithFallback';
@@ -74,8 +74,40 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
   const imageRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const scrollAnimationFrameRef = useRef<number | null>(null);
+  const previousImageCountRef = useRef<number>(0);
+  const scrollPositionRef = useRef<number>(0);
+  const shouldScrollToBottomRef = useRef<boolean>(false);
+
+  const stopScrolling = useCallback(() => {
+    if (scrollAnimationFrameRef.current !== null) {
+      cancelAnimationFrame(scrollAnimationFrameRef.current);
+      scrollAnimationFrameRef.current = null;
+    }
+  }, []);
+
+  const startScrolling = useCallback((direction: number) => {
+    if (scrollAnimationFrameRef.current !== null) return;
+    const step = () => {
+      window.scrollBy(0, direction * 8); // Tốc độ 8px mỗi frame là rất mượt
+      scrollAnimationFrameRef.current = requestAnimationFrame(step);
+    };
+    scrollAnimationFrameRef.current = requestAnimationFrame(step);
+  }, []);
+
   // Sync ordered images with profile changes, respecting imageOrder
   useEffect(() => {
+    // Save current scroll position before state update
+    scrollPositionRef.current = window.scrollY;
+
+    // Check if new images are being added
+    const currentCount = profile.images.length;
+    const previousCount = previousImageCountRef.current;
+
+    if (currentCount > previousCount && previousCount > 0) {
+      shouldScrollToBottomRef.current = true;
+    }
+
     if (profile.imageOrder && profile.imageOrder.length > 0) {
       // Sort images according to imageOrder array
       const sortedImages = profile.imageOrder
@@ -91,6 +123,31 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
       setOrderedImages(profile.images);
     }
   }, [profile.images, profile.id, profile.imageOrder]);
+
+  // Restore scroll position and scroll to bottom when new images are added
+  useEffect(() => {
+    // If new images were added, scroll to bottom smoothly
+    if (shouldScrollToBottomRef.current) {
+      shouldScrollToBottomRef.current = false;
+
+      // Use setTimeout to ensure DOM has updated with new images
+      setTimeout(() => {
+        window.scrollTo({
+          top: document.documentElement.scrollHeight,
+          behavior: 'smooth'
+        });
+      }, 100);
+    } else {
+      // Only restore scroll position if NOT adding new images
+      if (scrollPositionRef.current > 0) {
+        window.scrollTo(0, scrollPositionRef.current);
+      }
+    }
+
+    // Update the ref with current count
+    previousImageCountRef.current = orderedImages.length;
+    scrollPositionRef.current = 0;
+  }, [orderedImages]);
 
   // Handle responsive column count
   useEffect(() => {
@@ -418,6 +475,19 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
 
     if (!draggedImageId) return;
 
+    // Auto-scroll logic: scroll window if mouse near top/bottom
+
+    const { clientY } = e;
+    const margin = 120; // Vùng nhạy cảm 120px
+
+    if (clientY < margin) {
+      startScrolling(-1); // Cuộn lên
+    } else if (window.innerHeight - clientY < margin) {
+      startScrolling(1);  // Cuộn xuống
+    } else {
+      stopScrolling();    // Dừng khi chuột ở giữa
+    }
+
     // Get mouse position relative to the image element
     const rect = e.currentTarget.getBoundingClientRect();
     const mouseX = e.clientX - rect.left;
@@ -455,6 +525,7 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
   const handleImageDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    stopScrolling();
 
     if (!draggedImageId || insertionIndex === null) {
       setDraggedImageId(null);
@@ -492,6 +563,7 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
   const handleImageDragEnd = () => {
     setDraggedImageId(null);
     setInsertionIndex(null);
+    stopScrolling();
   };
 
 

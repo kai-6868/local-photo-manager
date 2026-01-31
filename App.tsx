@@ -745,7 +745,7 @@ const App: React.FC = () => {
             } else {
               console.error(`❌ Failed to reload profile: ${profileFolderName}`);
             }
-            alert(`✅ Added ${newImages.length} images successfully!`);
+            // alert(`✅ Added ${newImages.length} images successfully!`);
           } else {
             alert(`❌ Failed to add images`);
           }
