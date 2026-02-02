@@ -49,6 +49,11 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [draggedImageId, setDraggedImageId] = useState<string | null>(null);
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null);
+  
+  // Sort Mode State
+  const [isSortMode, setIsSortMode] = useState(false);
+  const [selectedImages, setSelectedImages] = useState<{id: string, order: number}[]>([]);
+  const [selectionOrder, setSelectionOrder] = useState(1);
   // Initialize ordered images according to imageOrder from profile JSON
   const [orderedImages, setOrderedImages] = useState<LocalImage[]>(() => {
     if (profile.imageOrder) {
@@ -566,6 +571,94 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
     stopScrolling();
   };
 
+  // Sort Mode Functions
+  const handleToggleSortMode = () => {
+    if (isSortMode) {
+      // Exit sort mode - reset selection
+      setSelectedImages([]);
+      setSelectionOrder(1);
+    }
+    setIsSortMode(!isSortMode);
+  };
+
+  const handleImageSelect = (imageId: string) => {
+    if (!isSortMode) return;
+    
+    const existingSelection = selectedImages.find(img => img.id === imageId);
+    
+    if (existingSelection) {
+      // Deselect: Remove and renumber remaining selections
+      const newSelection = selectedImages
+        .filter(img => img.id !== imageId)
+        .sort((a, b) => a.order - b.order)
+        .map((img, index) => ({ ...img, order: index + 1 }));
+      
+      setSelectedImages(newSelection);
+      setSelectionOrder(newSelection.length + 1);
+    } else {
+      // Select: Add with next order number
+      setSelectedImages(prev => [...prev, { id: imageId, order: selectionOrder }]);
+      setSelectionOrder(prev => prev + 1);
+    }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedImages([]);
+    setSelectionOrder(1);
+  };
+
+  const handleSubmitSort = () => {
+    if (selectedImages.length < 2) return;
+    
+    // Get anchor image (first selected)
+    const sortedSelected = selectedImages.sort((a, b) => a.order - b.order);
+    const anchorImageId = sortedSelected[0].id;
+    
+    // Find anchor position in current order
+    const anchorIndex = orderedImages.findIndex(img => img.id === anchorImageId);
+    if (anchorIndex === -1) return;
+    
+    // Create new order array
+    const newOrderedImages = [...orderedImages];
+    
+    // Get OTHER selected images (excluding anchor) to be inserted
+    const otherSelectedIds = sortedSelected.slice(1).map(sel => sel.id);
+    
+    // Remove OTHER selected images from their current positions (keep anchor)
+    const tempOrder = newOrderedImages.filter(img => !otherSelectedIds.includes(img.id));
+    
+    // Get other selected image objects in correct order
+    const otherSelectedObjects = sortedSelected
+      .slice(1) // Skip anchor (first one)
+      .map(sel => orderedImages.find(img => img.id === sel.id))
+      .filter(Boolean) as LocalImage[];
+    
+    // Find anchor position in temp array (anchor is still there)
+    const anchorIndexInTempOrder = tempOrder.findIndex(img => img.id === anchorImageId);
+    
+    // Insert other selected images after anchor
+    const finalOrder = [...tempOrder];
+    finalOrder.splice(anchorIndexInTempOrder + 1, 0, ...otherSelectedObjects);
+    
+    // Update state and notify parent
+    setOrderedImages(finalOrder);
+    if (onReorderImages) {
+      onReorderImages(finalOrder.map(img => img.id));
+    }
+    
+    // Exit sort mode
+    setIsSortMode(false);
+    setSelectedImages([]);
+    setSelectionOrder(1);
+  };
+
+  const getImageSelectionOrder = (imageId: string): number | null => {
+    const selection = selectedImages.find(img => img.id === imageId);
+    return selection ? selection.order : null;
+  };
+
+  // Handle avatar drag for cropping
+
 
   return (
     <div className="container mx-auto p-4 md:p-8">
@@ -683,6 +776,68 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
         </span>
       </h2>
 
+      {/* Sort Mode Control Bar */}
+      {orderedImages.length > 1 && (
+        <div className="flex items-center justify-between mb-6 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={handleToggleSortMode}
+              className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
+                isSortMode 
+                  ? 'bg-cyan-500 text-white hover:bg-cyan-600' 
+                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+              }`}
+            >
+              {isSortMode ? '✓ Sort Mode' : '🔀 Sort Images'}
+            </button>
+            
+            {isSortMode && (
+              <div className="text-sm text-gray-400">
+                {selectedImages.length === 0 ? (
+                  'Click images in order to arrange them'
+                ) : selectedImages.length === 1 ? (
+                  `Selected ${selectedImages.length} image (select at least 2 to sort)`
+                ) : (
+                  `Selected ${selectedImages.length} images`
+                )}
+              </div>
+            )}
+          </div>
+          
+          {isSortMode && (
+            <div className="flex items-center gap-2">
+              {selectedImages.length > 0 && (
+                <button
+                  onClick={handleClearSelection}
+                  className="px-3 py-1 text-sm bg-gray-600 text-gray-300 rounded hover:bg-gray-500 transition-colors"
+                >
+                  Clear All
+                </button>
+              )}
+              
+              <button
+                onClick={handleSubmitSort}
+                disabled={selectedImages.length < 2}
+                className={`px-4 py-2 rounded-lg font-medium transition-all duration-200 ${
+                  selectedImages.length >= 2
+                    ? 'bg-green-500 text-white hover:bg-green-600'
+                    : 'bg-gray-600 text-gray-500 cursor-not-allowed'
+                }`}
+              >
+                Apply Sort
+              </button>
+              
+              <button
+                onClick={handleToggleSortMode}
+                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {orderedImages.length === 0 ? (
         <div className="text-center py-20">
           <UserIcon className="w-16 h-16 mx-auto text-gray-600 mb-4" />
@@ -720,27 +875,44 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
                 {/* Gallery cell with dark background */}
                 <div className="relative w-full h-full bg-gray-800/50 rounded-lg overflow-hidden">
                   <div
-                    draggable
+                    draggable={!isSortMode}
                     onDragStart={(e) => {
-                      handleImageDragStart(e, image.id);
+                      if (!isSortMode) handleImageDragStart(e, image.id);
                     }}
-                    onDragOver={(e) => handleImageDragOver(e, globalIndex)}
-                    onDragLeave={handleImageDragLeave}
-                    onDrop={handleImageDrop}
+                    onDragOver={(e) => !isSortMode && handleImageDragOver(e, globalIndex)}
+                    onDragLeave={!isSortMode ? handleImageDragLeave : undefined}
+                    onDrop={!isSortMode ? handleImageDrop : undefined}
                     onDragEnd={() => {
-                      handleImageDragEnd();
+                      if (!isSortMode) handleImageDragEnd();
                     }}
-                    className={`group relative cursor-pointer overflow-hidden rounded-lg bg-gray-800 shadow-lg transition-all duration-300 hover:shadow-cyan-500/30 hover:scale-[1.02] ${draggedImageId === image.id
-                      ? 'opacity-50 scale-95 rotate-2 z-10'
-                      : ''
-                      }`}
-                    onClick={() => openLightbox(globalIndex)}
+                    className={`group relative cursor-pointer overflow-hidden rounded-lg bg-gray-800 shadow-lg transition-all duration-300 ${
+                      isSortMode 
+                        ? (getImageSelectionOrder(image.id) 
+                           ? 'ring-4 ring-cyan-400 shadow-lg shadow-cyan-400/50 scale-105' 
+                           : 'opacity-60 hover:opacity-80')
+                        : `hover:shadow-cyan-500/30 hover:scale-[1.02] ${draggedImageId === image.id ? 'opacity-50 scale-95 rotate-2 z-10' : ''}`
+                    }`}
+                    onClick={() => isSortMode ? handleImageSelect(image.id) : openLightbox(globalIndex)}
                   >
                     <ImageWithFallback
                       src={image.url}
                       alt={image.name}
                       className="w-full h-auto block transition-transform duration-300 group-hover:scale-110"
                     />
+
+                    {/* Selection Order Badge - Show in sort mode */}
+                    {isSortMode && getImageSelectionOrder(image.id) && (
+                      <div className="absolute top-2 left-2 w-8 h-8 bg-cyan-500 text-white rounded-full flex items-center justify-center font-bold text-sm shadow-lg z-30 animate-pulse">
+                        {getImageSelectionOrder(image.id)}
+                      </div>
+                    )}
+
+                    {/* Selection Order Badge - Show in sort mode */}
+                    {isSortMode && getImageSelectionOrder(image.id) && (
+                      <div className="absolute top-2 left-2 w-8 h-8 bg-cyan-500 text-white rounded-full flex items-center justify-center font-bold text-sm shadow-lg z-30 animate-pulse">
+                        {getImageSelectionOrder(image.id)}
+                      </div>
+                    )}
 
                     {/* Avatar Badge - Always visible when it's avatar, hidden on hover */}
                     {profile.avatarId === image.id && (
@@ -762,12 +934,14 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
                       <TrashIcon className="w-4 h-4 text-white" />
                     </button>
 
-                    {/* Drag Handle - Show on hover */}
-                    <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-30">
-                      <div className="w-6 h-6 bg-black/70 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing">
-                        <span className="text-white text-xs">⋮⋮</span>
+                    {/* Drag Handle - Show on hover (hidden in sort mode) */}
+                    {!isSortMode && (
+                      <div className="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-30">
+                        <div className="w-6 h-6 bg-black/70 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing">
+                          <span className="text-white text-xs">⋮⋮</span>
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     {/* Text Overlay */}
                     <div className="absolute inset-x-0 bottom-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
@@ -799,7 +973,7 @@ const ProfileDetailPage: React.FC<ProfileDetailPageProps> = ({
         <span className="text-lg font-medium">Drag & Drop or click to Upload</span>
         <span className="text-sm text-gray-600 mt-1">Add more images to your gallery</span>
         <span className="text-xs text-gray-500 mt-2">
-          💡 Tip: Drag to reorder • Paste images: Ctrl+V
+          💡 Tip: {isSortMode ? 'Exit sort mode to drag & drop • Paste images: Ctrl+V' : 'Drag to reorder • Sort multiple images • Paste images: Ctrl+V'}
         </span>
       </div>
 
